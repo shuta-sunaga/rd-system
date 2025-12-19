@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>要件定義作成システム</title>
+  <style>
+    :root {
+      --primary-color: #4472C4;
+      --primary-hover: #3563B0;
+      --success-color: #70AD47;
+      --error-color: #C00000;
+      --bg-color: #f5f7fa;
+      --card-bg: #ffffff;
+      --text-color: #333333;
+      --border-color: #e0e0e0;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', 'Yu Gothic UI', 'Meiryo', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    header h1 {
+      font-size: 28px;
+      color: var(--primary-color);
+      margin-bottom: 10px;
+    }
+
+    header p {
+      color: #666;
+      font-size: 14px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+      padding: 30px;
+      margin-bottom: 24px;
+    }
+
+    .card h2 {
+      font-size: 18px;
+      margin-bottom: 20px;
+      color: var(--text-color);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card h2::before {
+      content: '';
+      display: inline-block;
+      width: 4px;
+      height: 20px;
+      background: var(--primary-color);
+      border-radius: 2px;
+    }
+
+    /* Upload Zone */
+    .upload-zone {
+      border: 2px dashed var(--border-color);
+      border-radius: 8px;
+      padding: 40px 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      background: #fafbfc;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.drag-over {
+      border-color: var(--primary-color);
+      background: #f0f4fa;
+    }
+
+    .upload-zone.has-files {
+      border-color: var(--success-color);
+      background: #f0f8f0;
+    }
+
+    .upload-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      display: block;
+    }
+
+    .upload-text {
+      font-size: 16px;
+      color: #666;
+      margin-bottom: 8px;
+    }
+
+    .upload-hint {
+      font-size: 12px;
+      color: #999;
+    }
+
+    #file-input {
+      display: none;
+    }
+
+    /* File List */
+    .file-list {
+      margin-top: 20px;
+    }
+
+    .file-item {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      background: #f5f7fa;
+      border-radius: 8px;
+      margin-bottom: 8px;
+    }
+
+    .file-item .file-icon {
+      font-size: 24px;
+      margin-right: 12px;
+    }
+
+    .file-item .file-info {
+      flex: 1;
+    }
+
+    .file-item .file-name {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .file-item .file-size {
+      font-size: 12px;
+      color: #999;
+    }
+
+    .file-item .remove-btn {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 18px;
+      padding: 4px 8px;
+    }
+
+    .file-item .remove-btn:hover {
+      color: var(--error-color);
+    }
+
+    /* Button */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 14px 32px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      width: 100%;
+    }
+
+    .btn-primary {
+      background: var(--primary-color);
+      color: white;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--primary-hover);
+    }
+
+    .btn-primary:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    /* Progress */
+    .progress-container {
+      display: none;
+      margin-top: 20px;
+    }
+
+    .progress-container.show {
+      display: block;
+    }
+
+    .progress-bar {
+      height: 8px;
+      background: #e0e0e0;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--primary-color);
+      width: 0%;
+      transition: width 0.5s ease;
+    }
+
+    .progress-text {
+      text-align: center;
+      margin-top: 12px;
+      font-size: 14px;
+      color: #666;
+    }
+
+    /* Status Messages */
+    .status-message {
+      padding: 16px;
+      border-radius: 8px;
+      margin-top: 20px;
+      display: none;
+    }
+
+    .status-message.show {
+      display: block;
+    }
+
+    .status-message.success {
+      background: #e8f5e9;
+      color: #2e7d32;
+      border: 1px solid #c8e6c9;
+    }
+
+    .status-message.error {
+      background: #ffebee;
+      color: #c62828;
+      border: 1px solid #ffcdd2;
+    }
+
+    /* Process Steps */
+    .steps {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 30px;
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+      position: relative;
+    }
+
+    .step::before {
+      content: '';
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      width: 100%;
+      height: 2px;
+      background: #e0e0e0;
+      z-index: 0;
+    }
+
+    .step:last-child::before {
+      display: none;
+    }
+
+    .step-number {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #e0e0e0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      color: #666;
+      z-index: 1;
+      transition: all 0.3s ease;
+    }
+
+    .step.active .step-number {
+      background: var(--primary-color);
+      color: white;
+    }
+
+    .step.completed .step-number {
+      background: var(--success-color);
+      color: white;
+    }
+
+    .step-label {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      margin-top: 40px;
+      color: #999;
+      font-size: 12px;
+    }
+
+    /* Responsive */
+    @media (max-width: 600px) {
+      .container {
+        padding: 20px 16px;
+      }
+
+      header h1 {
+        font-size: 24px;
+      }
+
+      .card {
+        padding: 20px;
+      }
+
+      .steps {
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .step::before {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>要件定義作成システム</h1>
+      <p>PDFをアップロードするだけで、要件定義書をExcelで自動生成</p>
+    </header>
+
+    <!-- Process Steps -->
+    <div class="steps">
+      <div class="step active" id="step-1">
+        <div class="step-number">1</div>
+        <span class="step-label">PDF選択</span>
+      </div>
+      <div class="step" id="step-2">
+        <div class="step-number">2</div>
+        <span class="step-label">解析中</span>
+      </div>
+      <div class="step" id="step-3">
+        <div class="step-number">3</div>
+        <span class="step-label">完了</span>
+      </div>
+    </div>
+
+    <!-- Upload Card -->
+    <div class="card">
+      <h2>PDFファイルをアップロード</h2>
+
+      <div class="upload-zone" id="upload-zone">
+        <span class="upload-icon">📄</span>
+        <p class="upload-text">クリックまたはドラッグ&ドロップ</p>
+        <p class="upload-hint">PDF形式（最大10MB、5ファイルまで）</p>
+      </div>
+
+      <input type="file" id="file-input" accept=".pdf" multiple>
+
+      <div class="file-list" id="file-list"></div>
+
+      <div class="progress-container" id="progress-container">
+        <div class="progress-bar">
+          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        </div>
+        <p class="progress-text" id="progress-text">処理中...</p>
+      </div>
+
+      <div class="status-message" id="status-message"></div>
+
+      <button class="btn btn-primary" id="generate-btn" disabled>
+        <span>Excel生成を実行</span>
+      </button>
+    </div>
+
+    <footer>
+      <p>Powered by RD-System | Miyabi Framework</p>
+    </footer>
+  </div>
+
+  <script>
+    const uploadZone = document.getElementById('upload-zone');
+    const fileInput = document.getElementById('file-input');
+    const fileList = document.getElementById('file-list');
+    const generateBtn = document.getElementById('generate-btn');
+    const progressContainer = document.getElementById('progress-container');
+    const progressBarFill = document.getElementById('progress-bar-fill');
+    const progressText = document.getElementById('progress-text');
+    const statusMessage = document.getElementById('status-message');
+
+    let selectedFiles = [];
+
+    // Upload zone click
+    uploadZone.addEventListener('click', () => fileInput.click());
+
+    // File input change
+    fileInput.addEventListener('change', (e) => {
+      addFiles(e.target.files);
+    });
+
+    // Drag and drop
+    uploadZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      uploadZone.classList.add('drag-over');
+    });
+
+    uploadZone.addEventListener('dragleave', () => {
+      uploadZone.classList.remove('drag-over');
+    });
+
+    uploadZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      uploadZone.classList.remove('drag-over');
+      addFiles(e.dataTransfer.files);
+    });
+
+    // Add files
+    function addFiles(files) {
+      for (const file of files) {
+        if (file.type === 'application/pdf' && selectedFiles.length < 5) {
+          selectedFiles.push(file);
+        }
+      }
+      updateFileList();
+      updateUI();
+    }
+
+    // Update file list display
+    function updateFileList() {
+      fileList.innerHTML = selectedFiles.map((file, index) => `
+        <div class="file-item">
+          <span class="file-icon">📄</span>
+          <div class="file-info">
+            <div class="file-name">${file.name}</div>
+            <div class="file-size">${formatFileSize(file.size)}</div>
+          </div>
+          <button class="remove-btn" onclick="removeFile(${index})">×</button>
+        </div>
+      `).join('');
+    }
+
+    // Remove file
+    window.removeFile = function(index) {
+      selectedFiles.splice(index, 1);
+      updateFileList();
+      updateUI();
+    };
+
+    // Update UI state
+    function updateUI() {
+      const hasFiles = selectedFiles.length > 0;
+      uploadZone.classList.toggle('has-files', hasFiles);
+      generateBtn.disabled = !hasFiles;
+    }
+
+    // Format file size
+    function formatFileSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // Set step state
+    function setStep(stepNum) {
+      document.querySelectorAll('.step').forEach((step, index) => {
+        step.classList.remove('active', 'completed');
+        if (index + 1 < stepNum) {
+          step.classList.add('completed');
+        } else if (index + 1 === stepNum) {
+          step.classList.add('active');
+        }
+      });
+    }
+
+    // Show status message
+    function showStatus(message, type) {
+      statusMessage.textContent = message;
+      statusMessage.className = `status-message show ${type}`;
+    }
+
+    // Hide status message
+    function hideStatus() {
+      statusMessage.className = 'status-message';
+    }
+
+    // Generate Excel
+    generateBtn.addEventListener('click', async () => {
+      if (selectedFiles.length === 0) return;
+
+      try {
+        // Start processing
+        setStep(2);
+        generateBtn.disabled = true;
+        progressContainer.classList.add('show');
+        hideStatus();
+
+        // Create form data
+        const formData = new FormData();
+        selectedFiles.forEach(file => formData.append('files', file));
+
+        // Update progress
+        progressBarFill.style.width = '30%';
+        progressText.textContent = 'PDFを解析中...';
+
+        // Send request
+        const response = await fetch('/api/generate', {
+          method: 'POST',
+          body: formData,
+        });
+
+        progressBarFill.style.width = '70%';
+        progressText.textContent = 'Excel生成中...';
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || '処理に失敗しました');
+        }
+
+        progressBarFill.style.width = '100%';
+        progressText.textContent = 'ダウンロード準備中...';
+
+        // Download file
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `要件定義書_${new Date().toISOString().slice(0, 10)}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+
+        // Success
+        setStep(3);
+        showStatus('要件定義書のダウンロードが開始されました', 'success');
+
+        // Reset after delay
+        setTimeout(() => {
+          setStep(1);
+          progressContainer.classList.remove('show');
+          progressBarFill.style.width = '0%';
+          selectedFiles = [];
+          updateFileList();
+          updateUI();
+          hideStatus();
+        }, 5000);
+
+      } catch (error) {
+        console.error('Error:', error);
+        setStep(1);
+        progressContainer.classList.remove('show');
+        showStatus(error.message, 'error');
+        generateBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
