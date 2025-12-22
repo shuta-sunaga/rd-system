@@ -26,7 +26,11 @@
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "multer": "^2.0.2",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "pdf-to-img": "^5.0.0",
+    "pdfjs-dist": "^5.4.449",
+    "tesseract.js": "^7.0.0",
+    "unpdf": "^1.4.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

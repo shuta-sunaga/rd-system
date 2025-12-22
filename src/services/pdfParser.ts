@@ -1,11 +1,16 @@
 /**
  * PDF解析サービス
  * PDFファイルからテキストを抽出し、要件定義に必要な情報を解析する
+ *
+ * ハイブリッド方式:
+ * 1. まずpdf-parseでテキスト抽出を試行
+ * 2. 日本語文字が少ない場合はOCRにフォールバック
  */
 
-// pdf-parse v1.x uses default export
 import pdf from 'pdf-parse';
 import { readFile } from 'fs/promises';
+
+const JAPANESE_CHAR_THRESHOLD = 50;
 
 export interface ParsedPDFContent {
   rawText: string;
@@ -15,6 +20,7 @@ export interface ParsedPDFContent {
     author?: string;
     pageCount: number;
   };
+  extractionMethod?: 'pdf-parse' | 'gemini-vision';
 }
 
 export interface RequirementItem {
@@ -56,67 +62,91 @@ export interface TableData {
   rows: string[][];
 }
 
-/**
- * PDFファイルを解析してテキストを抽出
- */
+function countJapaneseChars(text: string): number {
+  const matches = text.match(/[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9faf]/g);
+  return matches ? matches.length : 0;
+}
+
+async function extractTextWithGeminiVision(buffer: Buffer, pageCount: number): Promise<{ text: string; pageCount: number }> {
+  console.log('Gemini VisionでPDF直接解析を開始...');
+
+  const { GoogleGenerativeAI } = await import('@google/generative-ai');
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not set');
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
+  const base64Pdf = buffer.toString('base64');
+
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        mimeType: 'application/pdf',
+        data: base64Pdf,
+      },
+    },
+    'このPDFに含まれるテキストを全て抽出してください。レイアウトを可能な限り維持し、表がある場合は表形式で出力してください。ページ区切りは「--- ページ区切り ---」で示してください。説明や解説は不要です。テキストのみを出力してください。',
+  ]);
+
+  const text = result.response.text();
+  console.log('Gemini Vision完了');
+
+  return {
+    text,
+    pageCount,
+  };
+}
+
 export async function parsePDF(filePath: string): Promise<ParsedPDFContent> {
   const dataBuffer = await readFile(filePath);
-  const data = await pdf(dataBuffer);
-
-  // ページごとにテキストを分割
-  const pages = data.text.split(/\n\s*-\s*\d+\s*-\s*\n/).filter((p: string) => p.trim());
-
-  return {
-    rawText: data.text,
-    pages,
-    metadata: {
-      title: data.info?.Title,
-      author: data.info?.Author,
-      pageCount: data.numpages,
-    },
-  };
+  return parsePDFBuffer(dataBuffer);
 }
 
-/**
- * PDFバッファから解析
- */
 export async function parsePDFBuffer(buffer: Buffer): Promise<ParsedPDFContent> {
+  console.log('pdf-parseでテキスト抽出を試行...');
   const data = await pdf(buffer);
+  const japaneseCount = countJapaneseChars(data.text);
+  console.log('日本語文字数: ' + japaneseCount);
 
-  // ページごとにテキストを分割
-  const pages = data.text.split(/\n\s*-\s*\d+\s*-\s*\n/).filter((p: string) => p.trim());
+  if (japaneseCount >= JAPANESE_CHAR_THRESHOLD) {
+    console.log('pdf-parseでの抽出成功');
+    const pages = data.text.split(/\n\s*-\s*\d+\s*-\s*\n/).filter((p: string) => p.trim());
+    return {
+      rawText: data.text,
+      pages,
+      metadata: {
+        title: data.info?.Title,
+        author: data.info?.Author,
+        pageCount: data.numpages,
+      },
+      extractionMethod: 'pdf-parse',
+    };
+  }
+
+  console.log('日本語文字が少ないためGemini Visionにフォールバック');
+  const ocrResult = await extractTextWithGeminiVision(buffer, data.numpages);
+  const pages = ocrResult.text.split(/--- ページ区切り ---/).filter((p: string) => p.trim());
 
   return {
-    rawText: data.text,
+    rawText: ocrResult.text,
     pages,
     metadata: {
       title: data.info?.Title,
       author: data.info?.Author,
-      pageCount: data.numpages,
+      pageCount: ocrResult.pageCount,
     },
+    extractionMethod: 'gemini-vision',
   };
 }
 
-/**
- * テキストから入力項目を抽出
- */
 export function extractInputItems(text: string): RequirementItem[] {
   const items: RequirementItem[] = [];
-
-  // 定義セクションを探す
-  const definitionPatterns = [
-    /第\d+条[（(]定義[）)]\s*([\s\S]*?)(?=第\d+条|$)/g,
-    /（\d+）([^（）\n]+)/g,
-  ];
-
-  // 入力項目を示すキーワード
-  const inputKeywords = [
-    '入力', '記入', '申請', '届出', '提出', '選定', '選択',
-  ];
-
-  // 「〜とは」で始まる定義を抽出
-  const definitionMatches = text.matchAll(/[「『]?([^「『」』\n]+)[」』]?とは[、,]([^。]+)/g);
-  for (const match of definitionMatches) {
+  const matches = text.matchAll(/[「『]?([^「『」』\n]+)[」』]?とは[、,]([^。]+)/g);
+  for (const match of matches) {
     items.push({
       category: '定義',
       name: match[1].trim(),
@@ -124,30 +154,15 @@ export function extractInputItems(text: string): RequirementItem[] {
       inputType: 'text',
     });
   }
-
   return items;
 }
 
-/**
- * テキストから計算式を抽出
- */
 export function extractFormulas(text: string): CalculationFormula[] {
   const formulas: CalculationFormula[] = [];
-
-  // 計算に関するパターン
-  const calculationPatterns = [
-    /([^。\n]+)を乗じた金額/g,
-    /([^。\n]+)の([0-9０-９]+[割分厘%％])/g,
-    /([^。\n]+)を上限として/g,
-  ];
-
-  // 「〜は、〜とする」形式の計算式
-  const formulaMatches = text.matchAll(/([^。\n]{5,50})は[、,]([^。]+)とする/g);
-  for (const match of formulaMatches) {
+  const matches = text.matchAll(/([^。\n]{5,50})は[、,]([^。]+)とする/g);
+  for (const match of matches) {
     const name = match[1].trim();
     const desc = match[2].trim();
-
-    // 数値や計算が含まれているか確認
     if (/[0-9０-９]|割|分|倍|円|率|額/.test(desc)) {
       formulas.push({
         name,
@@ -157,133 +172,73 @@ export function extractFormulas(text: string): CalculationFormula[] {
       });
     }
   }
-
   return formulas;
 }
 
-/**
- * 日本語の説明を計算式に変換
- */
 function convertToFormula(description: string): string {
   let formula = description;
-
-  // 割合の変換
-  formula = formula.replace(/([0-9０-９]+)割/g, (_, n) => `${toHalfWidth(n)} * 0.1`);
-  formula = formula.replace(/([0-9０-９]+)分/g, (_, n) => `${toHalfWidth(n)} * 0.01`);
-  formula = formula.replace(/([0-9０-９]+)[%％]/g, (_, n) => `${toHalfWidth(n)} * 0.01`);
-  formula = formula.replace(/([0-9０-９]+)倍/g, (_, n) => `* ${toHalfWidth(n)}`);
-
-  // 金額の変換
+  formula = formula.replace(/([0-9０-９]+)割/g, (_, n) => toHalfWidth(n) + ' * 0.1');
+  formula = formula.replace(/([0-9０-９]+)分/g, (_, n) => toHalfWidth(n) + ' * 0.01');
+  formula = formula.replace(/([0-9０-９]+)[%％]/g, (_, n) => toHalfWidth(n) + ' * 0.01');
+  formula = formula.replace(/([0-9０-９]+)倍/g, (_, n) => '* ' + toHalfWidth(n));
   formula = formula.replace(/([0-9０-９,，]+)円/g, (_, n) => toHalfWidth(n.replace(/[,，]/g, '')));
-
   return formula;
 }
 
-/**
- * 全角数字を半角に変換
- */
 function toHalfWidth(str: string): string {
-  return str.replace(/[０-９]/g, (s) =>
-    String.fromCharCode(s.charCodeAt(0) - 0xFEE0)
-  );
+  return str.replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
 }
 
-/**
- * 説明文から変数を抽出
- */
 function extractVariables(description: string): string[] {
   const variables: string[] = [];
-
-  // 「〜の」で終わる名詞を変数として抽出
-  const varPatterns = [
-    /([^、。\n]+(?:料|額|費|金|率))/g,
-  ];
-
-  for (const pattern of varPatterns) {
-    const matches = description.matchAll(pattern);
-    for (const match of matches) {
-      if (!variables.includes(match[1])) {
-        variables.push(match[1]);
-      }
+  const matches = description.matchAll(/([^、。\n]+(?:料|額|費|金|率))/g);
+  for (const match of matches) {
+    if (!variables.includes(match[1])) {
+      variables.push(match[1]);
     }
   }
-
   return variables;
 }
 
-/**
- * テーブルデータを抽出
- */
 export function extractTables(text: string): TableData[] {
   const tables: TableData[] = [];
-
-  // 「別表」パターンを検索
-  const tablePatterns = [
-    /[「『]?別表\s*(\d+)[」』]?\s*([^\n]+)\n([\s\S]*?)(?=[「『]?別表|付則|以\s*上|$)/g,
-  ];
-
-  for (const pattern of tablePatterns) {
-    const matches = text.matchAll(pattern);
-    for (const match of matches) {
-      const title = `別表${match[1]} ${match[2].trim()}`;
-      const content = match[3];
-
-      // テーブル内容を解析
-      const lines = content.split('\n').filter(l => l.trim());
-      if (lines.length > 0) {
-        tables.push({
-          title,
-          headers: [],
-          rows: lines.map(l => l.split(/\s{2,}|\t/).filter(c => c.trim())),
-        });
-      }
-    }
-  }
-
-  return tables;
-}
-
-/**
- * 費用項目を抽出
- */
-export function extractFees(text: string): FeeItem[] {
-  const fees: FeeItem[] = [];
-
-  // 費用に関するパターン
-  const feePatterns = [
-    /([^。\n]+(?:費|料|金|手当))[はを][、,]([^。]+)/g,
-  ];
-
-  for (const pattern of feePatterns) {
-    const matches = text.matchAll(pattern);
-    for (const match of matches) {
-      const name = match[1].trim();
-      const desc = match[2].trim();
-
-      // 金額を抽出
-      const amountMatch = desc.match(/([0-9０-９,，]+)\s*円/);
-
-      fees.push({
-        name,
-        description: desc,
-        amount: amountMatch ? toHalfWidth(amountMatch[1].replace(/[,，]/g, '')) : undefined,
+  const pattern = /[「『]?別表\s*(\d+)[」』]?\s*([^\n]+)\n([\s\S]*?)(?=[「『]?別表|付則|以\s*上|$)/g;
+  const matches = text.matchAll(pattern);
+  for (const match of matches) {
+    const title = '別表' + match[1] + ' ' + match[2].trim();
+    const content = match[3];
+    const lines = content.split('\n').filter((l) => l.trim());
+    if (lines.length > 0) {
+      tables.push({
+        title,
+        headers: [],
+        rows: lines.map((l) => l.split(/\s{2,}|\t/).filter((c) => c.trim())),
       });
     }
   }
+  return tables;
+}
 
+export function extractFees(text: string): FeeItem[] {
+  const fees: FeeItem[] = [];
+  const pattern = /([^。\n]+(?:費|料|金|手当))[はを][、,]([^。]+)/g;
+  const matches = text.matchAll(pattern);
+  for (const match of matches) {
+    const name = match[1].trim();
+    const desc = match[2].trim();
+    const amountMatch = desc.match(/([0-9０-９,，]+)\s*円/);
+    fees.push({
+      name,
+      description: desc,
+      amount: amountMatch ? toHalfWidth(amountMatch[1].replace(/[,，]/g, '')) : undefined,
+    });
+  }
   return fees;
 }
 
-/**
- * PDFから要件定義を抽出（メイン関数）
- */
-export async function extractRequirementsFromPDF(
-  buffer: Buffer
-): Promise<ExtractedRequirements> {
+export async function extractRequirementsFromPDF(buffer: Buffer): Promise<ExtractedRequirements> {
   const parsed = await parsePDFBuffer(buffer);
   const text = parsed.rawText;
-
-  // ドキュメントタイトルを抽出
   const titleMatch = text.match(/^([^\n]+)/);
   const documentTitle = titleMatch ? titleMatch[1].trim() : '要件定義書';
 
