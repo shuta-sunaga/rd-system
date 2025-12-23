@@ -58,6 +58,32 @@ app.get('/api/health', (req, res) => {
 });
 
 /**
+ * 診断用: POSTリクエストテスト
+ */
+app.post('/api/test-post', (req, res) => {
+  res.json({
+    status: 'ok',
+    method: 'POST',
+    contentType: req.headers['content-type'],
+    contentLength: req.headers['content-length'],
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * 診断用: ファイルアップロードテスト（処理なし）
+ */
+app.post('/api/test-upload', upload.array('files', 5), (req, res) => {
+  const files = req.files as Express.Multer.File[];
+  res.json({
+    status: 'ok',
+    filesReceived: files?.length || 0,
+    files: files?.map(f => ({ name: f.originalname, size: f.size })) || [],
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
  * PDF解析・要件定義生成API
  */
 app.post('/api/generate', upload.array('files', 5), async (req, res) => {
