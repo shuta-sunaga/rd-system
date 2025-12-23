@@ -151,7 +151,14 @@ export class AIExtractor {
   async extractRequirements(pdfText: string): Promise<AIExtractedRequirements> {
     const prompt = `${EXTRACTION_PROMPT}\n\n---\n\nPDFテキスト:\n${pdfText}`;
 
-    const result = await this.model.generateContent(prompt);
+    let result;
+    try {
+      result = await this.model.generateContent(prompt);
+    } catch (error: unknown) {
+      // Gemini API呼び出しエラーの詳細化
+      throw this.handleGeminiError(error);
+    }
+
     const response = await result.response;
     const text = response.text();
 
@@ -166,6 +173,92 @@ export class AIExtractor {
     } catch (e) {
       throw new Error(`JSON解析エラー: ${e}`);
     }
+  }
+
+  /**
+   * Gemini APIエラーを詳細なメッセージに変換
+   */
+  private handleGeminiError(error: unknown): Error {
+    const err = error as Error & { status?: number; code?: string; cause?: Error };
+    const message = err.message || String(error);
+    const status = err.status;
+    const code = err.code;
+
+    // ネットワークエラー
+    if (
+      message.includes('fetch failed') ||
+      message.includes('ECONNREFUSED') ||
+      message.includes('ENOTFOUND') ||
+      message.includes('getaddrinfo')
+    ) {
+      return new Error(
+        `[Gemini API接続エラー] サーバーに接続できません。\n` +
+        `原因: ネットワーク制限またはファイアウォールでAPIアクセスがブロックされている可能性があります。\n` +
+        `対象ドメイン: generativelanguage.googleapis.com\n` +
+        `詳細: ${message}`
+      );
+    }
+
+    // タイムアウト
+    if (
+      message.includes('timeout') ||
+      message.includes('ETIMEDOUT') ||
+      message.includes('AbortError')
+    ) {
+      return new Error(
+        `[Gemini API タイムアウト] APIリクエストがタイムアウトしました。\n` +
+        `原因: ネットワーク遅延またはプロキシ設定の問題の可能性があります。\n` +
+        `詳細: ${message}`
+      );
+    }
+
+    // SSL/TLS エラー
+    if (
+      message.includes('certificate') ||
+      message.includes('SSL') ||
+      message.includes('TLS') ||
+      message.includes('CERT_')
+    ) {
+      return new Error(
+        `[Gemini API SSL/TLSエラー] セキュリティ証明書の問題が発生しました。\n` +
+        `原因: 企業プロキシによるSSLインスペクションの可能性があります。\n` +
+        `詳細: ${message}`
+      );
+    }
+
+    // 認証エラー
+    if (status === 401 || status === 403 || message.includes('API key')) {
+      return new Error(
+        `[Gemini API 認証エラー] APIキーが無効または権限がありません。\n` +
+        `ステータス: ${status || 'N/A'}\n` +
+        `詳細: ${message}`
+      );
+    }
+
+    // レート制限
+    if (status === 429 || message.includes('quota') || message.includes('rate')) {
+      return new Error(
+        `[Gemini API レート制限] APIの使用制限に達しました。\n` +
+        `しばらく待ってから再試行してください。\n` +
+        `詳細: ${message}`
+      );
+    }
+
+    // サーバーエラー
+    if (status && status >= 500) {
+      return new Error(
+        `[Gemini API サーバーエラー] Googleサーバー側でエラーが発生しました。\n` +
+        `ステータス: ${status}\n` +
+        `詳細: ${message}`
+      );
+    }
+
+    // その他のエラー
+    return new Error(
+      `[Gemini API エラー] AI処理中にエラーが発生しました。\n` +
+      `コード: ${code || 'N/A'}, ステータス: ${status || 'N/A'}\n` +
+      `詳細: ${message}`
+    );
   }
 
   /**

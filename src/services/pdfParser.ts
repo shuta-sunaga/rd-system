@@ -67,6 +67,92 @@ function countJapaneseChars(text: string): number {
   return matches ? matches.length : 0;
 }
 
+/**
+ * Gemini APIエラーを詳細なメッセージに変換
+ */
+function handleGeminiError(error: unknown): Error {
+  const err = error as Error & { status?: number; code?: string };
+  const message = err.message || String(error);
+  const status = err.status;
+  const code = err.code;
+
+  // ネットワークエラー
+  if (
+    message.includes('fetch failed') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('ENOTFOUND') ||
+    message.includes('getaddrinfo')
+  ) {
+    return new Error(
+      `[Gemini Vision 接続エラー] サーバーに接続できません。\n` +
+      `原因: ネットワーク制限またはファイアウォールでAPIアクセスがブロックされている可能性があります。\n` +
+      `対象ドメイン: generativelanguage.googleapis.com\n` +
+      `詳細: ${message}`
+    );
+  }
+
+  // タイムアウト
+  if (
+    message.includes('timeout') ||
+    message.includes('ETIMEDOUT') ||
+    message.includes('AbortError')
+  ) {
+    return new Error(
+      `[Gemini Vision タイムアウト] APIリクエストがタイムアウトしました。\n` +
+      `原因: ネットワーク遅延またはプロキシ設定の問題の可能性があります。\n` +
+      `詳細: ${message}`
+    );
+  }
+
+  // SSL/TLS エラー
+  if (
+    message.includes('certificate') ||
+    message.includes('SSL') ||
+    message.includes('TLS') ||
+    message.includes('CERT_')
+  ) {
+    return new Error(
+      `[Gemini Vision SSL/TLSエラー] セキュリティ証明書の問題が発生しました。\n` +
+      `原因: 企業プロキシによるSSLインスペクションの可能性があります。\n` +
+      `詳細: ${message}`
+    );
+  }
+
+  // 認証エラー
+  if (status === 401 || status === 403 || message.includes('API key')) {
+    return new Error(
+      `[Gemini Vision 認証エラー] APIキーが無効または権限がありません。\n` +
+      `ステータス: ${status || 'N/A'}\n` +
+      `詳細: ${message}`
+    );
+  }
+
+  // レート制限
+  if (status === 429 || message.includes('quota') || message.includes('rate')) {
+    return new Error(
+      `[Gemini Vision レート制限] APIの使用制限に達しました。\n` +
+      `しばらく待ってから再試行してください。\n` +
+      `詳細: ${message}`
+    );
+  }
+
+  // サーバーエラー
+  if (status && status >= 500) {
+    return new Error(
+      `[Gemini Vision サーバーエラー] Googleサーバー側でエラーが発生しました。\n` +
+      `ステータス: ${status}\n` +
+      `詳細: ${message}`
+    );
+  }
+
+  // その他のエラー
+  return new Error(
+    `[Gemini Vision エラー] PDF解析中にエラーが発生しました。\n` +
+    `コード: ${code || 'N/A'}, ステータス: ${status || 'N/A'}\n` +
+    `詳細: ${message}`
+  );
+}
+
 async function extractTextWithGeminiVision(buffer: Buffer, pageCount: number): Promise<{ text: string; pageCount: number }> {
   console.log('Gemini VisionでPDF直接解析を開始...');
 
@@ -82,15 +168,20 @@ async function extractTextWithGeminiVision(buffer: Buffer, pageCount: number): P
 
   const base64Pdf = buffer.toString('base64');
 
-  const result = await model.generateContent([
-    {
-      inlineData: {
-        mimeType: 'application/pdf',
-        data: base64Pdf,
+  let result;
+  try {
+    result = await model.generateContent([
+      {
+        inlineData: {
+          mimeType: 'application/pdf',
+          data: base64Pdf,
+        },
       },
-    },
-    'このPDFに含まれるテキストを全て抽出してください。レイアウトを可能な限り維持し、表がある場合は表形式で出力してください。ページ区切りは「--- ページ区切り ---」で示してください。説明や解説は不要です。テキストのみを出力してください。',
-  ]);
+      'このPDFに含まれるテキストを全て抽出してください。レイアウトを可能な限り維持し、表がある場合は表形式で出力してください。ページ区切りは「--- ページ区切り ---」で示してください。説明や解説は不要です。テキストのみを出力してください。',
+    ]);
+  } catch (error: unknown) {
+    throw handleGeminiError(error);
+  }
 
   const text = result.response.text();
   console.log('Gemini Vision完了');
