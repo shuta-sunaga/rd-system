@@ -249,6 +249,7 @@
       background: #ffebee;
       color: #c62828;
       border: 1px solid #ffcdd2;
+      white-space: pre-line;
     }
 
     /* Process Steps */
@@ -509,6 +510,12 @@
     generateBtn.addEventListener('click', async () => {
       if (selectedFiles.length === 0) return;
 
+      // タイムアウト設定（60秒）
+      const TIMEOUT_MS = 60000;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      const startTime = Date.now();
+
       try {
         // Start processing
         setStep(2);
@@ -524,18 +531,28 @@
         progressBarFill.style.width = '30%';
         progressText.textContent = 'PDFを解析中...';
 
-        // Send request
+        // Send request with timeout
         const response = await fetch('/api/generate', {
           method: 'POST',
           body: formData,
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         progressBarFill.style.width = '70%';
         progressText.textContent = 'Excel生成中...';
 
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || '処理に失敗しました');
+          let errorMessage = '処理に失敗しました';
+          try {
+            const error = await response.json();
+            errorMessage = error.error || errorMessage;
+          } catch {
+            // JSONパース失敗時はステータスコードを表示
+            errorMessage = `サーバーエラー (${response.status}: ${response.statusText})`;
+          }
+          throw new Error(errorMessage);
         }
 
         progressBarFill.style.width = '100%';
@@ -568,11 +585,34 @@
         }, 5000);
 
       } catch (error) {
+        clearTimeout(timeoutId);
         console.error('Error:', error);
         setStep(1);
         progressContainer.classList.remove('show');
-        showStatus(error.message, 'error');
         generateBtn.disabled = false;
+
+        // エラータイプに応じた詳細メッセージ
+        let userMessage = error.message;
+        const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+
+        if (error.name === 'AbortError') {
+          // フロントエンドでのタイムアウト
+          userMessage = `処理がタイムアウトしました（${elapsedSec}秒経過）。PDFのサイズが大きすぎる可能性があります。`;
+        } else if (error instanceof TypeError && error.message === 'Failed to fetch') {
+          // ネットワークエラー（サーバータイムアウト含む）
+          if (elapsedSec >= 8) {
+            userMessage = `サーバー処理がタイムアウトしました（${elapsedSec}秒経過）。\n` +
+              '原因: サーバーの処理時間制限を超過した可能性があります。\n' +
+              '対策: PDFのページ数を減らすか、ファイルサイズを小さくしてお試しください。';
+          } else {
+            userMessage = 'サーバーに接続できませんでした。\n' +
+              'ネットワーク接続を確認するか、時間をおいて再試行してください。';
+          }
+        } else if (error.message.includes('サーバーエラー')) {
+          userMessage = error.message + '\n時間をおいて再試行してください。';
+        }
+
+        showStatus(userMessage, 'error');
       }
     });
   </script>
